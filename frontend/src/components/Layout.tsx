@@ -11,7 +11,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* SideNavBar (Desktop Only) */}
       <aside className="hidden lg:flex flex-col gap-2 p-4 h-full bg-white text-slate-700 font-['Inter'] text-sm font-medium w-64 border-r border-slate-200">
         <div className="mb-8 px-4">
-          <h2 className="text-lg font-black text-slate-900">ExpensePro</h2>
+          <h2 className="text-lg font-black text-slate-900">FinPrecision</h2>
           <p className="text-xs text-slate-500">{user?.name || 'Personal Tier'}</p>
         </div>
         <nav className="flex-1 flex flex-col gap-1">
