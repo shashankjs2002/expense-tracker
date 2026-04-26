@@ -1,0 +1,434 @@
+openapi: 3.0.3
+info:
+  title: Expense Tracker API
+  description: |
+    Production‑grade personal finance tool.  
+    All monetary amounts are stored and transferred as **integer cents** (e.g., `amountCents: 1250` for ₹12.50).  
+    Idempotency is enforced on expense creation via the `Idempotency-Key` header.  
+    Authentication uses short‑lived JWT access tokens and rotated refresh tokens in HttpOnly cookies.
+  version: 1.0.0
+  contact:
+    name: Candidate (Your Name)
+    email: you@example.com
+
+servers:
+  - url: http://localhost:4000/api
+    description: Local development server
+
+tags:
+  - name: Auth
+    description: Registration, login, token refresh, logout
+  - name: Expenses
+    description: Personal expense management
+
+paths:
+  # ========== AUTH ==========
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created, refresh token set in cookie
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                description: HttpOnly refresh token cookie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login and receive tokens
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful, access token in body, refresh token in cookie
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      accessToken:
+                        type: string
+                        description: JWT access token (15 min expiry)
+                      user:
+                        $ref: '#/components/schemas/User'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token (uses cookie)
+      operationId: refresh
+      security: []   # no access token required; refresh token is in cookie
+      responses:
+        '200':
+          description: Tokens rotated, new refresh token cookie set
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      accessToken:
+                        type: string
+        '401':
+          description: Invalid/expired/revoked refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout and revoke refresh token
+      operationId: logout
+      security: []   # refresh token cookie used
+      responses:
+        '200':
+          description: Logged out, cookie cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+        '401':
+          description: No valid session
+
+  # ========== EXPENSES ==========
+  /expenses:
+    post:
+      tags: [Expenses]
+      summary: Create a new expense (idempotent)
+      operationId: createExpense
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: |
+            A UUID v4 string. The same key submitted with the same user will always return
+            the original 201 response and will never create a duplicate expense.
+            The client must generate a unique key per logical submission and reuse it
+            across retries (network failures, page refreshes).
+          schema:
+            type: string
+            format: uuid
+            example: 550e8400-e29b-41d4-a716-446655440000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExpenseRequest'
+      responses:
+        '201':
+          description: Expense created (or previously created for this key)
+          headers:
+            Idempotency-Key:
+              schema:
+                type: string
+              description: Echo of the idempotency key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpenseResponse'
+        '400':
+          description: Missing or invalid Idempotency-Key header
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid access token
+        '422':
+          description: Validation error (invalid amount, missing fields)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+    get:
+      tags: [Expenses]
+      summary: List expenses (with optional filter & sort)
+      operationId: getExpenses
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: category
+          in: query
+          description: Filter expenses by category
+          schema:
+            type: string
+          example: Food
+        - name: sort
+          in: query
+          description: Sort order by date
+          schema:
+            type: string
+            enum: [date_desc, date_asc]
+            default: date_desc
+      responses:
+        '200':
+          description: A list of expenses and the total of the returned set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      expenses:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Expense'
+                      totalCents:
+                        type: integer
+                        description: Sum of amountCents for the returned expenses
+                        example: 3550
+                      formattedTotal:
+                        type: string
+                        description: Display‑ready total with currency symbol
+                        example: ₹35.50
+        '401':
+          description: Authentication required
+
+  # ========== HEALTH ==========
+  /health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token obtained from `/auth/login` or `/auth/refresh`.
+        Short‑lived (15 minutes).
+
+  schemas:
+    # --- User ---
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 664abc...
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+    UserResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+
+    # --- Auth requests ---
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        name:
+          type: string
+          maxLength: 100
+      example:
+        email: user@example.com
+        password: securePassword1
+        name: John Doe
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    # --- Expense ---
+    CreateExpenseRequest:
+      type: object
+      required: [amount, category, date]
+      properties:
+        amount:
+          type: string
+          description: |
+            Decimal string representing the expense amount.
+            Must be positive and have at most 2 decimal places.
+            Example: "12.50"
+          pattern: '^\d+(\.\d{1,2})?$'
+          example: "12.50"
+        category:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: Food
+        description:
+          type: string
+          maxLength: 200
+          example: Lunch at restaurant
+        date:
+          type: string
+          format: date-time
+          description: ISO 8601 date of the expense
+          example: "2025-03-15T00:00:00Z"
+
+    Expense:
+      type: object
+      properties:
+        _id:
+          type: string
+        userId:
+          type: string
+        amountCents:
+          type: integer
+          description: Amount in smallest currency unit (e.g., paise/cents)
+          example: 1250
+        category:
+          type: string
+        description:
+          type: string
+        date:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ExpenseResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        data:
+          $ref: '#/components/schemas/Expense'
+
+    # --- Errors ---
+    Error:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+      example:
+        status: error
+        message: Invalid email or password
+
+    ValidationError:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+      example:
+        status: error
+        message: Validation failed
+        errors:
+          - field: amount
+            message: Amount must be a valid decimal number with up to 2 decimal places

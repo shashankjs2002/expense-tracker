@@ -13,6 +13,13 @@ const expenseRoutes = require('./routes/expenses');
 
 const app = express();
 
+const swaggerUi = require('swagger-ui-express');
+const YAML = require('yamljs');
+const path = require('path');
+
+const swaggerDoc = YAML.load(path.join(__dirname, '..', 'docs', 'openapi.yml'));
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
+
 // --- Security & Parsing ---
 app.use(helmet());
 app.use(cors({

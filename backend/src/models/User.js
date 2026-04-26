@@ -13,11 +13,10 @@ const userSchema = new mongoose.Schema(
             trim: true,
             index: true,
         },
-        // Hashed password; never leaked by default
         passwordHash: {
             type: String,
             required: true,
-            select: false,   // exclude from queries unless explicitly .select('+passwordHash')
+            select: false,          // never returned by default
         },
         name: {
             type: String,
@@ -25,48 +24,56 @@ const userSchema = new mongoose.Schema(
             trim: true,
             maxlength: 100,
         },
+        // Small flag to track password changes (because virtuals aren't tracked)
+        _passwordChanged: {
+            type: Boolean,
+            default: false,
+            select: false,
+        },
     },
-    { timestamps: true }   // adds createdAt, updatedAt
+    { timestamps: true }
 );
 
-// ----- Virtual for setting plain-text password -----
-// This is never stored; it only exists when we set user.password = '...'
-userSchema.virtual('password')
+// ----- Virtual for plain password -----
+userSchema
+    .virtual('password')
     .set(function (plain) {
-        this._password = plain;   // store temporarily so pre-save can access it
+        this._plainPassword = plain;              // store temporarily
+        this._passwordChanged = true;            // mark that password was modified
     })
     .get(function () {
-        return this._password;
+        return this._plainPassword;
     });
 
-// ----- Pre-save hook to hash password -----
-userSchema.pre('save', async function (next) {
-    // Only hash if the password virtual was set (new or changing)
-    if (!this.isModified('password')) return next();
+// ----- Pre‑validate hook: hash password before validation runs -----
+// Must be 'validate' not 'save' because Mongoose validates `required` fields
+// BEFORE pre-save hooks, so passwordHash would fail the required check.
+userSchema.pre('validate', async function (next) {
+    // Only hash if the password was explicitly changed (flag set)
+    if (!this._passwordChanged) return next();
 
     try {
-        this.passwordHash = await bcrypt.hash(this._password, SALT_ROUNDS);
+        // Invalidate passwordChanged flag (avoid re‑hashing on subsequent saves)
+        this._passwordChanged = false;
+        this.passwordHash = await bcrypt.hash(this._plainPassword, SALT_ROUNDS);
+        this._plainPassword = undefined;          // clear plaintext from memory
         next();
     } catch (err) {
         next(err);
     }
 });
 
-// ----- Instance method for password comparison -----
+// ----- Instance method for comparison -----
 userSchema.methods.comparePassword = async function (candidate) {
     return bcrypt.compare(candidate, this.passwordHash);
 };
 
-// ----- Remove the temporary plain password after hashing -----
-userSchema.post('save', function () {
-    // Ensure the plain text is not hanging around (security best practice)
-    this._password = undefined;
-});
-
-// ----- JSON transformation: never expose passwordHash or __v -----
+// ----- JSON transformation -----
 userSchema.set('toJSON', {
     transform: (doc, ret) => {
         delete ret.passwordHash;
+        delete ret._passwordChanged;
+        delete ret._plainPassword;
         delete ret.__v;
         return ret;
     },

@@ -69,6 +69,49 @@ exports.register = async (req, res, next) => {
     }
 };
 
+// exports.register = async (req, res, next) => {
+//     try {
+//         const { email, password, name } = req.body;
+
+//         // Check for existing user
+//         const exists = await User.findOne({ email });
+//         if (exists) {
+//             throw new AppError('Email already registered', 409);
+//         }
+
+//         // Hash password
+//         const passwordHash = await User.hashPassword(password);
+
+//         // Create user with already-hashed password
+//         const user = await User.create({ email, name, passwordHash });
+
+//         // Generate refresh token family
+//         const refreshToken = generateRefreshToken();
+//         const family = generateTokenFamily();
+//         const expiresAt = getRefreshTokenExpiry();
+
+//         await RefreshToken.create({
+//             userId: user._id,
+//             tokenHash: hashToken(refreshToken),
+//             family,
+//             expiresAt,
+//         });
+
+//         setRefreshCookie(res, refreshToken, config.refreshTokenCookieMaxAge);
+
+//         res.status(201).json({
+//             status: 'success',
+//             data: {
+//                 user: { id: user._id, email: user.email, name: user.name },
+//             },
+//         });
+
+//         logger.info({ userId: user._id }, 'User registered');
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
 // --- Login ---
 exports.login = async (req, res, next) => {
     try {
@@ -109,6 +152,62 @@ exports.login = async (req, res, next) => {
 };
 
 // --- Refresh ---
+// exports.refresh = async (req, res, next) => {
+//     try {
+//         const oldToken = req.cookies.refreshToken;
+//         if (!oldToken) {
+//             throw new AppError('Refresh token missing', 401);
+//         }
+
+//         const hashed = hashToken(oldToken);
+
+//         // Find the token in DB
+//         const tokenDoc = await RefreshToken.findOne({ tokenHash: hashed });
+//         if (!tokenDoc || !tokenDoc.isValid()) {
+//             // Token not found or expired/revoked
+//             clearRefreshCookie(res);
+//             throw new AppError('Invalid or expired refresh token', 401);
+//         }
+
+//         // Check for token reuse (theft detection)
+//         if (tokenDoc.revokedAt) {
+//             // This token was already used! Revoke the whole family.
+//             await RefreshToken.updateMany(
+//                 { family: tokenDoc.family, revokedAt: null },
+//                 { $set: { revokedAt: new Date() } }
+//             );
+//             clearRefreshCookie(res);
+//             logger.warn({ userId: tokenDoc.userId, family: tokenDoc.family }, 'Token reuse detected, family revoked');
+//             throw new AppError('Suspicious token reuse, all sessions revoked. Please log in again.', 401);
+//         }
+
+//         // Rotate: revoke the old token
+//         tokenDoc.revokedAt = new Date();
+//         await tokenDoc.save();
+
+//         // Issue new tokens
+//         const accessToken = generateAccessToken(tokenDoc.userId);
+
+//         const newRefreshToken = generateRefreshToken();
+//         const expiresAt = getRefreshTokenExpiry();
+
+//         await RefreshToken.create({
+//             userId: tokenDoc.userId,
+//             tokenHash: hashToken(newRefreshToken),
+//             family: tokenDoc.family,   // keep same family
+//             expiresAt,
+//         });
+
+//         setRefreshCookie(res, newRefreshToken, config.refreshTokenCookieMaxAge);
+
+//         res.status(200).json({
+//             status: 'success',
+//             data: { accessToken },
+//         });
+//     } catch (err) {
+//         next(err);
+//     }
+// };
 exports.refresh = async (req, res, next) => {
     try {
         const oldToken = req.cookies.refreshToken;
@@ -117,41 +216,49 @@ exports.refresh = async (req, res, next) => {
         }
 
         const hashed = hashToken(oldToken);
-
-        // Find the token in DB
         const tokenDoc = await RefreshToken.findOne({ tokenHash: hashed });
-        if (!tokenDoc || !tokenDoc.isValid()) {
-            // Token not found or expired/revoked
+
+        // --- Not found: invalid token ---
+        if (!tokenDoc) {
             clearRefreshCookie(res);
-            throw new AppError('Invalid or expired refresh token', 401);
+            throw new AppError('Invalid refresh token', 401);
         }
 
-        // Check for token reuse (theft detection)
+        // --- Token is already revoked → possible theft! ---
         if (tokenDoc.revokedAt) {
-            // This token was already used! Revoke the whole family.
+            // Revoke the entire family immediately
             await RefreshToken.updateMany(
                 { family: tokenDoc.family, revokedAt: null },
                 { $set: { revokedAt: new Date() } }
             );
             clearRefreshCookie(res);
-            logger.warn({ userId: tokenDoc.userId, family: tokenDoc.family }, 'Token reuse detected, family revoked');
-            throw new AppError('Suspicious token reuse, all sessions revoked. Please log in again.', 401);
+            logger.warn(
+                { userId: tokenDoc.userId, family: tokenDoc.family },
+                'Token theft detected - family revoked'
+            );
+            throw new AppError('Suspicious token use. All sessions revoked.', 401);
         }
 
-        // Rotate: revoke the old token
+        // --- Token expired ---
+        if (tokenDoc.expiresAt < new Date()) {
+            clearRefreshCookie(res);
+            throw new AppError('Refresh token expired', 401);
+        }
+
+        // --- Token is valid → perform rotation ---
+        // Revoke the old token
         tokenDoc.revokedAt = new Date();
         await tokenDoc.save();
 
-        // Issue new tokens
+        // Issue new access + refresh tokens
         const accessToken = generateAccessToken(tokenDoc.userId);
-
         const newRefreshToken = generateRefreshToken();
         const expiresAt = getRefreshTokenExpiry();
 
         await RefreshToken.create({
             userId: tokenDoc.userId,
             tokenHash: hashToken(newRefreshToken),
-            family: tokenDoc.family,   // keep same family
+            family: tokenDoc.family,
             expiresAt,
         });
 
@@ -165,6 +272,7 @@ exports.refresh = async (req, res, next) => {
         next(err);
     }
 };
+
 
 // --- Logout ---
 exports.logout = async (req, res, next) => {
