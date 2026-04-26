@@ -205,4 +205,9 @@ backend/
 └── README.md
 ```
 
+----
+```
+Backend is deployed on free instance of render which can delay requests by 50 seconds or more.
+
+```
 ---
