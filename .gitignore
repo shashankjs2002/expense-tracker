@@ -1,0 +1,82 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Dependency directories
+node_modules/
+vendor/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+build/
+out/
+
+# Coverage directory
+coverage/
+
+# IDE / Editor folders
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+target/
+
+# C / C++
+*.o
+*.obj
+*.exe
+*.out
+
+# Mac system files
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+
+# Package lock files (optional, depending on team policy)
+# package-lock.json
+# yarn.lock
+
+# Docker
+docker-compose.override.yml
+
+# Misc
+*.bak
+*.orig
